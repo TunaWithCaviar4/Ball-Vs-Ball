@@ -1,0 +1,136 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.7 }
+      - name: Generate Android project from index.html and icon.png
+        run: |
+          mkdir -p android/app/src/main/java/com/ballvsball/game android/app/src/main/assets android/app/src/main/res/values android/app/src/main/res/mipmap-xxxhdpi
+          cp index.html android/app/src/main/assets/index.html
+          cp icon.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cat > android/settings.gradle.kts <<'EOF0'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = "BallVsBall"
+          include(":app")
+          EOF0
+          cat > android/build.gradle.kts <<'EOF1'
+          plugins { id("com.android.application") version "8.5.2" apply false }
+          EOF1
+          cat > android/gradle.properties <<'EOF2'
+          org.gradle.jvmargs=-Xmx2g
+          EOF2
+          cat > android/app/build.gradle.kts <<'EOF3'
+          plugins { id("com.android.application") }
+          android {
+              namespace = "com.ballvsball.game"
+              compileSdk = 34
+              defaultConfig { applicationId = "com.ballvsball.game"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = "1.0" }
+              buildTypes { release { isMinifyEnabled = false } }
+              compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+          }
+          EOF3
+          cat > android/app/src/main/AndroidManifest.xml <<'EOF4'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="Ball vs Ball"
+                  android:icon="@mipmap/ic_launcher"
+                  android:theme="@style/AppTheme"
+                  android:allowBackup="true"
+                  android:hardwareAccelerated="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="fullSensor"
+                      android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF4
+          cat > android/app/src/main/res/values/styles.xml <<'EOF5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+                  <item name="android:windowFullscreen">true</item>
+                  <item name="android:windowBackground">#FF0F0D1A</item>
+              </style>
+          </resources>
+          EOF5
+          cat > android/app/src/main/java/com/ballvsball/game/MainActivity.java <<'EOF6'
+          package com.ballvsball.game;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+              private WebView web;
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  web = new WebView(this);
+                  web.setBackgroundColor(0xFF0F0D1A);
+                  web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                  web.setOnLongClickListener(v -> true);
+                  web.setLongClickable(false);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  web.setWebViewClient(new WebViewClient());
+                  setContentView(web);
+                  web.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean focus) {
+                  super.onWindowFocusChanged(focus);
+                  if (focus) {
+                      web.setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                              | View.SYSTEM_UI_FLAG_FULLSCREEN
+                              | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                              | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                              | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+                  }
+              }
+
+              // Back = return to the menu while a match is on; exit only from the menu.
+              @Override
+              public void onBackPressed() {
+                  web.evaluateJavascript(
+                          "(typeof state!=='undefined'&&state!=='menu')?(state='menu','1'):'0'",
+                          v -> { if (v == null || !v.contains("1")) finish(); });
+              }
+
+              @Override protected void onPause() { super.onPause(); web.onPause(); }
+              @Override protected void onResume() { super.onResume(); web.onResume(); }
+          }
+          EOF6
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ball-vs-ball-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
